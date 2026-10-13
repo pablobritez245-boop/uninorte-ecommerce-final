@@ -1,0 +1,42 @@
+import { displayText, displayPrice } from '../utils/product-display.js';
+import { t } from '../features/i18n/i18n.js';
+import { motionOptions } from '../modules/ui-motion.js';
+import { productCard } from '../components/product-card/product-card.js';
+import { openProductModal } from '../components/product-modal/product-modal.js';
+export const catalogSection = products => `<section class="catalog-section" id="catalog" aria-labelledby="catalog-title" tabindex="-1"><div class="section-heading"><div><p class="eyebrow">DE NUESTRA TIERRA</p><h2 id="catalog-title">Nuestros productos<span>.</span></h2></div><p>Una colección, un mismo origen.<br>Conoce la colección de GlobalizaT.</p></div><div class="product-grid">${products.map(productCard).join('')}</div><p class="catalog-note">Colección académica · Imágenes conceptuales, precios y existencias de demostración.</p></section>`;
+export function mountCatalog(root, products) {
+  const abort = new AbortController(); let animation, pending = false, previews, navigation = 0;
+  const previewsReady=import('../components/product-preview/product-preview.js').then(module=>{if(!abort.signal.aborted)previews=module.mountCatalogPreviews(root,products);}).catch(()=>{});
+  document.addEventListener('navigationstart', () => { navigation++; animation?.cancel(); }, { signal: abort.signal });
+  root.querySelectorAll('[data-product-preview]').forEach(button => {
+    const product = products.find(item => item.id === button.dataset.productPreview);
+    const card = button.closest('.product-card');
+    card.addEventListener('click', async () => {
+      if (pending) return; pending = true; card.setAttribute('aria-busy','true'); const request=navigation;
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      animation = card.animate([{ transform: reduced ? 'none' : 'scale(.985)', opacity: .92 }, { transform: 'none', opacity: 1 }], motionOptions('fast'));
+      try {
+        await animation.finished; await previewsReady;
+        if(abort.signal.aborted || request!==navigation)return;
+        const selection=await previews?.select(product);
+        if(abort.signal.aborted || request!==navigation || !card.isConnected){selection?.release();return;}
+        const source=card.querySelector('[data-model-mount]');
+        const fallback=source.querySelector('.stage-product-image') || source.querySelector('.concept-product');
+        const dialog=openProductModal(product,button,{...selection,card,rect:source.getBoundingClientRect(),fallback,fallbackRect:fallback?.getBoundingClientRect()});
+        if(dialog)await new Promise(resolve=>dialog.addEventListener('close',resolve,{once:true}));
+      }
+      catch { /* La navegación canceló la respuesta de la tarjeta. */ }
+      finally { pending = false; card.removeAttribute('aria-busy'); }
+    }, { signal: abort.signal });
+  });
+  window.addEventListener('preferenceschange',()=>{
+    root.querySelectorAll('[data-product-preview]').forEach(button=>{
+      const p=products.find(p=>p.id===button.dataset.productPreview),card=button.closest('.product-card');
+      card.querySelector('h3').textContent=displayText(p.name);card.querySelector('.card-category').textContent=displayText(p.category);
+      card.querySelector('.card-price').firstChild.textContent=displayPrice(p);card.querySelector('.card-price small').textContent=t('examplePrice');
+      card.querySelector('.availability').firstChild.textContent=t(p.stock>0&&p.availability!=='unavailable'?'available':'unavailable');card.querySelector('.availability small').textContent=t('sampleStock');
+      card.querySelector('.card-origin').textContent=t('collection');button.firstChild.textContent=t('productView');button.setAttribute('aria-label',t('productView')+': '+displayText(p.name));
+    });
+  },{signal:abort.signal});
+  return () => { abort.abort(); animation?.cancel(); previews?.dispose(); };
+}
